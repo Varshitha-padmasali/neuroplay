@@ -4,15 +4,12 @@
 export default function PerformanceHUD({ sessionStats, difficulty, config }) {
     const { attempts, correct, responseTimes } = sessionStats;
     if (attempts === 0) return null;
-  
     const accuracy    = Math.round((correct / attempts) * 100);
     const avgResponse = responseTimes.length
       ? Math.round(responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length)
       : 0;
-  
     // Colour-code accuracy
     const accColor = accuracy >= 80 ? "#10b981" : accuracy >= 50 ? "#f59e0b" : "#ef4444";
-  
     return (
       <div style={{
         display: "flex", justifyContent: "space-between",
@@ -36,7 +33,6 @@ export default function PerformanceHUD({ sessionStats, difficulty, config }) {
         }}>
           {config.label}
         </div>
-  
         {/* Response time */}
         <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
           <span>⚡</span>
