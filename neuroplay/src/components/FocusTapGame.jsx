@@ -1,26 +1,19 @@
-// src/components/FocusTapGame.jsx
+// src/components/FocusTapGame.jsx  (Step 5 — adaptive version)
 import { useState, useEffect, useRef } from "react";
+import { useAdaptiveEngine, DIFFICULTY } from "../hooks/useAdaptiveEngine";
+import DifficultyNudge from "./DifficultyNudge";
+import PerformanceHUD from "./PerformanceHUD";
+import SessionSummary from "./SessionSummary";
+import Confetti from "./Confetti";
 
-// The "correct" symbol the player must tap
 const TARGET_SYMBOL = "⭐";
+const DISTRACTORS   = ["🔶","🔷","🔺","🟣","🟤","🔴","🟡","🔸","🔹","🟠"];
 
-// Pool of distractors
-const DISTRACTORS = ["🔶", "🔷", "🔺", "🟣", "🟤", "🔴", "🟡"];
-
-// How many symbols appear on screen at once
-const GRID_SIZE = 9;
-
-// Game duration in seconds
-const GAME_DURATION = 30;
-
-// --- Helper: build a fresh grid ---
-function buildGrid() {
-  const positions = Array.from({ length: GRID_SIZE }, (_, i) => i);
-  // Pick 2–4 random positions for the target
-  const targetCount = Math.floor(Math.random() * 3) + 2;
+function buildGrid(gridSize, targetCount) {
+  const positions = Array.from({ length: gridSize }, (_, i) => i);
   const targetPositions = new Set();
-  while (targetPositions.size < targetCount) {
-    targetPositions.add(Math.floor(Math.random() * GRID_SIZE));
+  while (targetPositions.size < Math.min(targetCount, gridSize - 1)) {
+    targetPositions.add(Math.floor(Math.random() * gridSize));
   }
   return positions.map((i) => ({
     id: i,
@@ -31,31 +24,45 @@ function buildGrid() {
   }));
 }
 
-export default function FocusTapGame({ onGameEnd }) {
-  const [phase, setPhase] = useState("idle"); // idle | playing | done
-  const [grid, setGrid] = useState([]);
-  const [score, setScore] = useState(0);
-  const [timeLeft, setTimeLeft] = useState(GAME_DURATION);
-  const [feedback, setFeedback] = useState(null); // "correct" | "wrong"
-  const timerRef = useRef(null);
+export default function FocusTapGame({ onGameEnd, focusMode }) {
+  const {
+    difficulty, config, recommendation,
+    sessionStats, markStart, checkAndAdjust,
+    applyDifficulty, resetSession,
+  } = useAdaptiveEngine(1);
 
-  // --- Start game ---
+  const [phase, setPhase]       = useState("idle");
+  const [grid, setGrid]         = useState([]);
+  const [score, setScore]       = useState(0);
+  const [timeLeft, setTimeLeft] = useState(config.gameDuration);
+  const [feedback, setFeedback] = useState(null);
+  const [confetti, setConfetti] = useState(false);
+  const timerRef                = useRef(null);
+  const scoreRef                = useRef(0);  // keep score accessible in closure
+
+  // Keep scoreRef in sync
+  useEffect(() => { scoreRef.current = score; }, [score]);
+
   function startGame() {
+    resetSession();
+    scoreRef.current = 0;
     setScore(0);
-    setTimeLeft(GAME_DURATION);
-    setGrid(buildGrid());
+    setTimeLeft(config.gameDuration);
+    setGrid(buildGrid(config.gridSize, config.targetCount));
     setPhase("playing");
+    markStart();
   }
 
-  // --- Countdown timer ---
+  // Countdown
   useEffect(() => {
     if (phase !== "playing") return;
     timerRef.current = setInterval(() => {
       setTimeLeft((t) => {
         if (t <= 1) {
           clearInterval(timerRef.current);
-          setPhase("done");
-          if (onGameEnd) onGameEnd(score); 
+          setConfetti(true);
+          setPhase("summary");
+          if (onGameEnd) onGameEnd(scoreRef.current);
           return 0;
         }
         return t - 1;
@@ -64,133 +71,84 @@ export default function FocusTapGame({ onGameEnd }) {
     return () => clearInterval(timerRef.current);
   }, [phase]);
 
-  // --- Refresh grid every 4 seconds so symbols shuffle ---
+  // Grid refresh at adaptive rate
   useEffect(() => {
     if (phase !== "playing") return;
-    const id = setInterval(() => setGrid(buildGrid()), 4000);
+    const id = setInterval(() => {
+      setGrid(buildGrid(config.gridSize, config.targetCount));
+      markStart();
+    }, config.refreshRate);
     return () => clearInterval(id);
-  }, [phase]);
+  }, [phase, config.gridSize, config.targetCount, config.refreshRate, markStart]);
 
-  // --- Handle a tap ---
   function handleTap(cell) {
     if (phase !== "playing" || cell.tapped) return;
-
     const isCorrect = cell.symbol === TARGET_SYMBOL;
-    setScore((s) => (isCorrect ? s + 10 : Math.max(0, s - 5)));
+    const delta = isCorrect ? 10 : -5;
+    setScore((s) => Math.max(0, s + delta));
     setFeedback(isCorrect ? "correct" : "wrong");
-    setTimeout(() => setFeedback(null), 400);
+    setTimeout(() => { setFeedback(null); markStart(); }, 400);
+    setGrid((g) => g.map((c) => c.id === cell.id ? { ...c, tapped: true } : c));
 
-    // Mark cell as tapped so it dims
-    setGrid((g) =>
-      g.map((c) => (c.id === cell.id ? { ...c, tapped: true } : c))
-    );
+    // Feed the engine
+    checkAndAdjust(isCorrect);
   }
 
-  // --- Styles (inline, ADHD-friendly: high contrast, no clutter) ---
-  const containerStyle = {
-    maxWidth: 420,
-    margin: "0 auto",
-    padding: 24,
-    fontFamily: "'Segoe UI', sans-serif",
-    textAlign: "center",
-  };
-
-  const gridStyle = {
-    display: "grid",
-    gridTemplateColumns: "repeat(3, 1fr)",
-    gap: 12,
-    margin: "24px 0",
-  };
-
-  const cellStyle = (cell) => ({
-    fontSize: 48,
-    padding: 16,
-    borderRadius: 16,
-    cursor: cell.tapped ? "default" : "pointer",
-    background: cell.tapped ? "#e5e7eb" : "#f9fafb",
-    border: "2px solid #e5e7eb",
-    opacity: cell.tapped ? 0.3 : 1,
-    transition: "all 0.15s ease",
-    userSelect: "none",
-  });
-
-  const timerColor = timeLeft <= 10 ? "#ef4444" : "#10b981";
+  const cols   = config.gridSize === 12 ? 4 : 3;
+  const accent = focusMode ? "#4b5563" : "#6366f1";
 
   return (
-    <div style={containerStyle}>
-      {/* Header */}
-      <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>
-        🎯 Focus Tap
-      </h2>
+    <div style={{ maxWidth: 440, margin: "0 auto", padding: 24, fontFamily: "'Segoe UI', sans-serif", textAlign: "center" }}>
+      <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>🎯 Focus Tap</h2>
       <p style={{ color: "#6b7280", marginBottom: 16 }}>
         Tap only <strong>{TARGET_SYMBOL}</strong> — ignore everything else!
       </p>
 
-      {/* Idle state */}
       {phase === "idle" && (
-        <button
-          onClick={startGame}
-          style={{
-            background: "#6366f1",
-            color: "#fff",
-            border: "none",
-            borderRadius: 12,
-            padding: "14px 36px",
-            fontSize: 18,
-            fontWeight: 600,
-            cursor: "pointer",
-          }}
-        >
+        <button onClick={startGame} style={{ background: accent, color: "#fff", border: "none", borderRadius: 12, padding: "14px 36px", fontSize: 18, fontWeight: 600, cursor: "pointer" }}>
           Start Game
         </button>
       )}
 
-      {/* Playing state */}
       {phase === "playing" && (
         <>
+          {/* Adaptive nudge */}
+          {recommendation && (
+            <DifficultyNudge
+              recommendation={recommendation}
+              onAccept={() => applyDifficulty(recommendation)}
+              onDismiss={() => applyDifficulty(null)}
+            />
+          )}
+
           {/* HUD */}
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              background: "#f3f4f6",
-              borderRadius: 12,
-              padding: "10px 20px",
-            }}
-          >
-            <span style={{ fontWeight: 700, fontSize: 18 }}>
-              ⭐ {score} pts
-            </span>
-            <span
-              style={{ fontWeight: 700, fontSize: 18, color: timerColor }}
-            >
-              ⏱ {timeLeft}s
-            </span>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: "#f3f4f6", borderRadius: 12, padding: "10px 20px", marginBottom: 8 }}>
+            <span style={{ fontWeight: 700, fontSize: 18 }}>⭐ {score} pts</span>
+            <span style={{ fontWeight: 700, fontSize: 18, color: timeLeft <= 10 ? "#ef4444" : "#10b981" }}>⏱ {timeLeft}s</span>
           </div>
 
-          {/* Feedback flash */}
+          {/* Live performance HUD */}
+          <PerformanceHUD sessionStats={sessionStats} difficulty={difficulty} config={config} />
+
+          {/* Feedback */}
           {feedback && (
-            <div
-              style={{
-                margin: "8px 0",
-                fontSize: 18,
-                fontWeight: 700,
-                color: feedback === "correct" ? "#10b981" : "#ef4444",
-              }}
-            >
+            <div style={{ margin: "6px 0", fontSize: 18, fontWeight: 700, color: feedback === "correct" ? "#10b981" : "#ef4444" }}>
               {feedback === "correct" ? "✓ +10" : "✗ −5"}
             </div>
           )}
 
-          {/* Symbol grid */}
-          <div style={gridStyle}>
+          {/* Grid */}
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 10, margin: "16px 0" }}>
             {grid.map((cell) => (
-              <button
-                key={cell.id}
-                style={cellStyle(cell)}
-                onClick={() => handleTap(cell)}
-              >
+              <button key={cell.id} onClick={() => handleTap(cell)} style={{
+                fontSize: cols === 4 ? 36 : 44, padding: 12, borderRadius: 14,
+                cursor: cell.tapped ? "default" : "pointer",
+                background: cell.tapped ? "#e5e7eb" : "#f9fafb",
+                border: "2px solid #e5e7eb",
+                opacity: cell.tapped ? 0.25 : 1,
+                transition: "opacity 0.15s",
+                userSelect: "none",
+              }}>
                 {cell.symbol}
               </button>
             ))}
@@ -198,35 +156,17 @@ export default function FocusTapGame({ onGameEnd }) {
         </>
       )}
 
-      {/* Done state */}
-      {phase === "done" && (
-        <div>
-          <div style={{ fontSize: 56, marginBottom: 8 }}>🏆</div>
-          <h3 style={{ fontSize: 24, fontWeight: 700 }}>
-            Time's up! You scored {score} points
-          </h3>
-          <p style={{ color: "#6b7280", marginBottom: 20 }}>
-            {score >= 80
-              ? "Amazing focus! 🌟"
-              : score >= 40
-              ? "Good effort! Keep practicing 💪"
-              : "Don't give up — try again! 🎯"}
-          </p>
-          <button
-            onClick={startGame}
-            style={{
-              background: "#6366f1",
-              color: "#fff",
-              border: "none",
-              borderRadius: 12,
-              padding: "14px 36px",
-              fontSize: 18,
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            Play Again
-          </button>
+      {phase === "summary" && (
+        <div style={{ position: "relative" }}>
+          <Confetti trigger={confetti} />
+          <SessionSummary
+            sessionStats={sessionStats}
+            difficulty={difficulty}
+            score={score}
+            gameType="focus"
+            onPlayAgain={startGame}
+            onMenu={() => setPhase("idle")}
+          />
         </div>
       )}
     </div>
