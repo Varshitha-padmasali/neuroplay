@@ -50,6 +50,7 @@ export default function FocusTapGame({ onGameEnd, focusMode }) {
     setTimeLeft(config.gameDuration);
     setGrid(buildGrid(config.gridSize, config.targetCount));
     setPhase("playing");
+    resetSession();
     markStart();
   }
 

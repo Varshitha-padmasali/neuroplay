@@ -1,6 +1,12 @@
 // src/components/WordBuilderGame.jsx
 import { useState, useEffect, useCallback } from "react";
 import { WORD_LEVELS } from "../data/words";
+// Change the import line at the top — add:
+import { useAdaptiveEngine } from "../hooks/useAdaptiveEngine";
+import DifficultyNudge from "./DifficultyNudge";
+import PerformanceHUD from "./PerformanceHUD";
+import SessionSummary from "./SessionSummary";
+import Confetti from "./Confetti";
 
 // ── Audio via Web Speech API (no library needed) ──────────────────────────
 function speak(text) {
@@ -34,7 +40,7 @@ function pickWord(level) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-export default function WordBuilderGame({ onGameEnd }) {
+export default function WordBuilderGame({ onGameEnd, dyslexiaFont }) {
   const [level, setLevel]           = useState(1);
   const [phase, setPhase]           = useState("idle");   // idle|playing|correct|wrong|done
   const [current, setCurrent]       = useState(null);     // { word, hint, speak }
@@ -47,7 +53,7 @@ export default function WordBuilderGame({ onGameEnd }) {
 
   // ── Start / next word ────────────────────────────────────────────────────
   const startRound = useCallback((currentLevel, currentScore, completed) => {
-    const wordObj = pickWord(currentLevel);
+    const wordObj = pickWord(config.wordLevel);
     setCurrent(wordObj);
     setBank(buildTiles(wordObj.word));
     setAnswer([]);
@@ -79,6 +85,7 @@ export default function WordBuilderGame({ onGameEnd }) {
   // ── Check answer ──────────────────────────────────────────────────────────
   function checkAnswer() {
     if (answer.length !== current.word.length) return;
+    checkAndAdjust(built === current.word);
     const built = answer.map((t) => t.letter).join("");
     if (built === current.word) {
       const points = level * 20;
@@ -132,6 +139,12 @@ export default function WordBuilderGame({ onGameEnd }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [phase, answer, checkAnswer]);
+
+  const {
+    difficulty: aiDifficulty, config, recommendation,
+    sessionStats, markStart, checkAndAdjust,
+    applyDifficulty, resetSession,
+  } = useAdaptiveEngine(1);
 
   // ── Styles ────────────────────────────────────────────────────────────────
   const S = {
